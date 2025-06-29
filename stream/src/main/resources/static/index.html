@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat with HTMX Streaming</title>
+    <script src="https://unpkg.com/htmx.org@1.9.6"></script>
+    <script src="https://unpkg.com/htmx.org/dist/ext/ws.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .chat-container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+            height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-header {
+            background: #4a6fa5;
+            color: white;
+            padding: 15px;
+            font-size: 1.2em;
+            font-weight: 500;
+        }
+        .chat-messages {
+            flex-grow: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .message {
+            max-width: 80%;
+            padding: 10px 15px;
+            border-radius: 15px;
+            line-height: 1.6;
+            word-wrap: break-word;
+        }
+        .message pre {
+            background-color: #f6f8fa;
+            border-radius: 6px;
+            padding: 16px;
+            overflow-x: auto;
+        }
+        .message code {
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.9em;
+        }
+        .message pre code {
+            background: none;
+            padding: 0;
+        }
+        .message p {
+            margin: 0.5em 0;
+        }
+        .message ul, .message ol {
+            margin: 0.5em 0;
+            padding-left: 1.5em;
+        }
+        .message blockquote {
+            border-left: 4px solid #dfe2e5;
+            color: #6a737d;
+            margin: 0.5em 0;
+            padding: 0 1em;
+        }
+        .user-message {
+            align-self: flex-end;
+            background-color: #4a6fa5;
+            color: white;
+            border-bottom-right-radius: 5px;
+        }
+        .ai-message {
+            align-self: flex-start;
+            background-color: #f0f0f0;
+            color: #333;
+            border-bottom-left-radius: 5px;
+        }
+        .typing-indicator {
+            display: none;
+            align-self: flex-start;
+            color: #666;
+            font-style: italic;
+            margin: 5px 0;
+        }
+        .chat-input {
+            display: flex;
+            padding: 15px;
+            background: #f9f9f9;
+            border-top: 1px solid #eee;
+        }
+        #userInput {
+            flex-grow: 1;
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        #userInput:focus {
+            border-color: #4a6fa5;
+        }
+        button {
+            margin-left: 10px;
+            padding: 10px 20px;
+            background-color: #4a6fa5;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #3a5a80;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">AI Chat with Streaming</div>
+        <div class="chat-messages" id="chatMessages">
+            <!-- Initial greeting will be added by JavaScript -->
+        </div>
+        <div class="typing-indicator" id="typingIndicator">AI가 답변을 작성 중입니다...</div>
+        <div class="chat-input">
+            <input type="text" id="userInput" placeholder="메시지를 입력하세요..." hx-trigger="keyup[event.key === 'Enter']" hx-post="/chat" hx-target="#chatMessages" hx-swap="beforeend" hx-trigger="none">
+            <button id="sendButton" onclick="sendMessage()">전송</button>
+        </div>
+    </div>
+
+    <script>
+        // Configure marked.js
+        marked.setOptions({
+            highlight: function(code, lang) {
+                if (lang && hljs.getLanguage(lang)) {
+                    return hljs.highlight(code, { language: lang }).value;
+                }
+                return hljs.highlightAuto(code).value;
+            },
+            gfm: true,
+            breaks: true,
+            headerIds: false,
+            mangle: false
+        });
+
+        // Enable htmx debug mode
+        htmx.logAll();
+        
+        // Add initial greeting with Markdown support
+        document.addEventListener('DOMContentLoaded', function() {
+            addMessage('ai', '안녕하세요! *Markdown*이 지원되는 채팅입니다.\n\n예시:\n```python\nprint("Hello, World!")\n```\n\n- 목록 1\n- 목록 2\n\n> 인용문도 가능합니다.');
+        });
+
+        // Function to send message
+        function sendMessage() {
+            const userInput = document.getElementById('userInput');
+            const message = userInput.value.trim();
+            
+            if (message) {
+                // Add user message to chat
+                addMessage('user', message);
+                
+                // Clear input
+                userInput.value = '';
+                
+                // Show typing indicator
+                const typingIndicator = document.getElementById('typingIndicator');
+                typingIndicator.style.display = 'block';
+                
+                // Scroll to bottom
+                scrollToBottom();
+                
+                // Create a new div for the AI response
+                const responseDiv = document.createElement('div');
+                responseDiv.className = 'message ai-message';
+                responseDiv.id = 'aiResponse';
+                document.getElementById('chatMessages').appendChild(responseDiv);
+                
+                
+                // Use EventSource for streaming response
+                const eventSource = new EventSource(`/stream?message=${encodeURIComponent(message)}`);
+                let responseText = '';
+                
+                eventSource.onmessage = function(event) {
+                    if (event.data === '[DONE]') {
+                        eventSource.close();
+                        typingIndicator.style.display = 'none';
+                        return;
+                    }
+                    
+                    responseText += event.data;
+                    // Convert markdown to HTML
+                    responseDiv.innerHTML = marked.parse(responseText);
+                    // Apply syntax highlighting
+                    document.querySelectorAll('pre code').forEach((block) => {
+                        hljs.highlightElement(block);
+                    });
+                    scrollToBottom();
+                };
+                
+                eventSource.onerror = function() {
+                    eventSource.close();
+                    typingIndicator.style.display = 'none';
+                    responseDiv.textContent = responseText || '오류가 발생했습니다. 다시 시도해주세요.';
+                };
+            }
+        }
+        
+        // Helper function to add a message to the chat
+        function addMessage(sender, text) {
+            const messagesDiv = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}-message`;
+            
+            if (sender === 'ai') {
+                messageDiv.innerHTML = marked.parse(text);
+                // Apply syntax highlighting for code blocks
+                document.querySelectorAll('pre code').forEach((block) => {
+                    hljs.highlightElement(block);
+                });
+            } else {
+                messageDiv.textContent = text;
+            }
+            
+            messagesDiv.appendChild(messageDiv);
+            scrollToBottom();
+        }
+        
+        // Helper function to scroll chat to bottom
+        function scrollToBottom() {
+            const messagesDiv = document.getElementById('chatMessages');
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        // Allow sending message with Enter key
+        document.getElementById('userInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>
